@@ -1,0 +1,128 @@
+# import requests
+# r = requests.get('http://api.github.com/user',auth=('user','pass'))
+# # r.status_code
+#
+# # r.headers['content-type']
+#
+# # r.encoding
+#
+# # r.text
+#
+# r.json()
+
+import requests
+# r = requests.get('https://api.gethub.com/events')
+# r = requests.post('https://httpbin.org/post',data={'key','value'})
+# r = requests.put('https://httpbin.org/put',data={'key','value'})
+# r = requests.delete('https://httpbin.org/delete')
+# r = requests.head('https://httpbin.org/get')
+# r = requests.options('https://httpbin..org/get')
+
+# payload = {'key1':'value1','key2':'value2'}
+# r = requests.get('https://httpbin.org/get',params=payload)
+# print(r.url)
+
+#__init__是构造函数，self是当前实例
+import requests
+import urllib3  # 直接导入独立的urllib3
+from urllib3.exceptions import InsecureRequestWarning  # 从urllib3里拿异常
+from requests.exceptions import ConnectTimeout,ReadTimeout,ConnectionError
+
+urllib3.disable_warnings(InsecureRequestWarning)  # 禁用SSL警告
+class HttpRequest: #为什么写封装类，因为后续的POC可以直接实例化这个类就可以用，只需要改timeout的时间就可以复用节约开销
+    # def __init__(self,timeout=5):#self是什么，self.imeout就是每个实例自己的配置，这里写多场景工具的基础
+    #     self.timeout = timeout #超时时间
+
+    def __init__(self, timeout=5, headers=None, cookies=None):
+        self.timeout = timeout
+        # 默认header,避免被识别为爬虫
+        self.headers = headers or {"User-Agent": "Mozilla/5.0(windows NT 10.0;Win64;x64)"}
+        self.cookies = cookies or {}  # 存Cookie,比如登录后的session
+
+    # 改get/post方法，加上headers和cookies
+    def get(self, url):
+        try:
+            resp = requests.get(
+                url,
+                timeout=self.timeout,
+                verify=False,
+                headers=self.headers,
+                cookies=self.cookies
+            )
+            return resp.text
+        # except Exception as e:
+        #     print(f"GET请求失败:{e}")
+        #     return None
+        except ConnectTimeout:
+            print(f"连接超时:{url}(目标可能宕机)")
+        except ReadTimeout:
+            print("f读取超时:{url}(目标响应慢，可能存在时间盲注)")
+        except ConnectionError:
+            print(f"连接失败:{url}(目标不存在)")
+        except Exception as e:
+            print(f"未知错误:{e}")
+        return None
+    # def post(self, url, data=None, json=None):
+    #     try:
+    #         resp = requests.post(
+    #             url,
+    #             data=data,
+    #             json=json,
+    #             timeout=self.timeout,
+    #             verify=False)
+    #         return resp
+    #     except Exception as e:
+    #         print(f"POST请求失败:{e}")
+    #         return None
+
+    def post(self, url, data=None, json=None):
+        try:
+            resp = requests.post(
+                url,
+                data=data,
+                json=json,
+                timeout=self.timeout,
+                verify=False,
+                headers=self.headers,
+                cookies=self.cookies
+            )
+            return resp
+        except Exception as e:
+            print(f"POST请求失败:{e}")
+            return None
+
+# requester = HttpRequest()
+# result = requester.get("http://www.baidu.com")
+# if result:
+#     print("目标存活，响应长度:",len(result))
+
+
+# request = HttpRequest()
+# login_url = "http://testphp.vulnweb.com/login.php"
+# payload = {"uname":"test","pass":"test","submit":"login"} #弱口令payload
+# resp = request.post(login_url,data=payload)
+# if resp and resp.status_code == 200:
+#     print("弱口令存在!")
+
+# request = HttpRequest()
+# login_resp = request.post("http://testphp.vulnweb.com/login.php",data={"uname":"test","pass":"test","submit":"login"})
+# request.cookies = login_resp.cookies
+# user_resp = request.get("http://testphp.vulnweb.com/userinfo.php")
+# if user_resp and "test" in user_resp.text:
+#     print("成功访问后台")
+# if user_resp and "test" in user_resp.text:
+#     print("✅ 登录成功！成功访问用户信息页")
+# else:
+#     # 调试：让你看到实际返回的内容，避免“没回显”的困惑
+#     print("❌ 没匹配到特征，但你的代码没写错！")
+#     print("登录后响应内容预览：", user_resp.text[:500] if user_resp else "请求失败")
+
+
+
+request = HttpRequest()
+resp = request.get("https://www.baidu.com")
+if resp:
+    print(f"请求成功!内容浏览:")
+    print(resp[:500])
+else:
+    print("请求失败")
