@@ -1,0 +1,218 @@
+#正则表达式
+#1.提取漏洞特征
+# import re
+# def extract_vuln_feature(resp_text):
+#     #常见1，提取ctf中falg
+#     flag_pattern = re.compile(r"flag\{(.*?)\}") #预编译正则，提高效率
+#     flag_match = flag_pattern.search(resp_text)
+#     if flag_match:
+#         print(f"找到Flag:{flag_match.group(1)}") #group(1)取括号内的内容
+#     #场景2:判断登录成功(比如响应包含"Welcome,admin")
+#     login_success_pattern = re.compile(r"Welcome,(\w+)") #\w+匹配用户名
+#     login_match = login_success_pattern.search(resp_text)
+#     if login_match:
+#         print(f"登录成功,用户名:{login_match.group(1)}")
+#
+#     #场景3:检测SQL错误(比如"MYSQL syntax error",说明可能存在注入)
+#     sql_error_pattern = re.compile(r"MYSQL syntax error|PostgreSQL error|SQL Server error")
+#     if sql_error_pattern.search(resp_text):
+#         print("存在SQl语法错误，可能有注入漏洞")
+#
+# #测试:模拟一个含有漏洞的响应
+# mock_resp = """
+# <html>
+#     <p>Welcome,admin</p>
+#     <p>Error:MySQL syntax error near '1''at line 1</p>
+#     <p>Secret: flag{sql_injection_123}</p>
+# </html>
+# """
+# extract_vuln_feature(mock_resp)
+
+
+#爬取页面中的链接
+# import re
+# import aiohttp
+# import asyncio
+#
+# #从HTML中提取所有链接(href属性)
+# def extract_links(html):
+#     #匹配<a href="xxx">或<a href='xxx'>#支持双引号
+#     link_pattern = re.compile(r'<a\s+href=["\'](.*?)["\']',re.IGNORECASE)#re。IGNORECASE忽略大小写
+#     links = link_pattern.findall(html) #findall返回匹配结果
+#     #过滤空链接,补全相对(比如"/admin"->"http://test.com/admin")
+#     base_url = "http://testphp.vulnweb.com"
+#     full_links = []
+#     for link in links:
+#         if not link:
+#             continue
+#         if link.startswith("http"):
+#             full_links.append(link)
+#         else:
+#             full_links.append(base_url + link)
+#     return full_links
+#
+# #异步爬取页面并提取链接
+# async def crawl_links(url):
+#     async with aiohttp.ClientSession() as session:
+#         try:
+#             async with session.get(url,ssl=False) as resp:
+#                 html = await resp.txt()
+#                 links = extract_links(html)
+#                 print(f"从{url}提取到{len(links)}个链接:")
+#                 for link in links[:5]: #只打印前5个
+#                     print(f" -{link}")
+#         except Exception as e:
+#             print(f"爬取{url}失败:{e}")
+# if __name__ == "__main__":
+#     asyncio.run(crawl_links("http://testphp.vulnwev.com"))
+
+#三，从手动输入到批量扫描1000个靶机
+#1.读取目标(支持从targets.txt批量加载)
+# def load_targets(file_path):
+#     """从文件读取目标，支持过滤空行和注释(#开头的行)"""
+#     try:
+#         with open(file_path,"r",encoding="utf-8") as f:
+#             #处理每一行:去空格,跳过空行和注释
+#             targets = []
+#             for line in f:
+#                 line = line.strip() #去前后空格
+#                 if not line or line.startswith("#"):#跳过空行和注释
+#                     continue
+#                 #补全协议(如果目标没写http/htpps,默认加http://)
+#                 if not line.startswith(("http://","https://")):
+#                     line = "http://" + line
+#                 targets.append(line)
+#             print(f"从{file_path}加载了{len(targets)}个目标")
+#             return targets
+#     except FileNotFoundError:
+#         print(f"错误:未找到文件{file_path}")
+#         return []
+#     except Exception as e:
+#         print(f"读取文件出错:{e}")
+#         return []
+#
+# targets = load_targets("C:\\Users\\xiao\\Desktop\\targets.txt")
+
+# #2.写漏洞报告(支持按时间命名，追加结果)
+# from datetime import datetime
+# def save_vuln_result(result,report_dir="reports"):
+#     """保存漏洞结果到报告文件，按日期命令"""
+#     import os
+#     #确保报告目录存在
+#     if not os.path.exists(report_dir):
+#         os.makedirs(report_dir)
+#     #生成带日期的文件名
+#     date_str = datetime.now().strftime("%Y%m%d")
+#     report_path = os.path.join(report_dir,f"{date_str}_vuln_report.txt")
+#     #追加结果
+#     with open(report_path,"a",encoding="utf-8") as f:
+#         time_str = datetime.now().strftime("%H:%M:%S")
+#         f.write(f"[{time_str}]{result}\n")
+#     print(f"结果已保存到:{report_path}")
+# #测试
+# save_vuln_result("SQL注入漏洞:http://testphp.vulnweb.com/artists.php?artist=1' or 1=1#")
+# save_vuln_result("弱口令漏洞：http://testphp.vulnweb.com/login.php，账号test/密码test")
+
+#完整流程xss扫描器代码
+import aiohttp
+import asyncio
+from asyncio import Semaphore
+from datetime import datetime
+
+#1.从文件读取目标RUL(支持注释和空行过滤)
+def load_targets(file_path):
+    """从文件加载目标，自动忽略注释行（#开头）和空行"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            # 处理每一行：去除空白、过滤注释和空行
+            targets = [
+                line.strip()
+                for line in f.readlines()
+                if line.strip() and not line.strip().startswith('#')
+            ]
+        print(f"成功加载 {len(targets)} 个目标")
+        return targets
+    except FileNotFoundError:
+        print(f"错误：未找到文件 {file_path}")
+        return []
+    except Exception as e:
+        print(f"读取目标失败：{e}")
+        return []
+# 2. 保存扫描结果到文件
+def save_vuln_result(result):
+    """将漏洞结果追加保存到日志文件，包含时间戳"""
+    if not result:
+        return
+    # 结果格式：[时间] 漏洞信息
+    log_line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {result}\n"
+    try:
+        with open("vuln_results.txt", 'a', encoding='utf-8') as f:
+            f.write(log_line)
+        print(f"结果已保存：{log_line.strip()}")
+    except Exception as e:
+        print(f"保存结果失败：{e}")
+#3.异步检测XSS漏洞
+async def check_xss(session,url,semaphore):
+    """检测XSS漏洞:向URL传入特定payload，若响应中包含未过滤的payload则判定为漏洞"""
+    async with semaphore:
+        #XSS测试payload
+        payload = "<script>alert('xss_text')</script>"
+        #构造测试URL
+        test_url = f"{url}?keyword={payload}"
+
+        try:
+            #发送请求并获取响应内容
+            async with session.get(test_url,timeout=10,ssl=False) as resp:
+                response_text = await resp.text()
+
+                #核心判断：apyload是否被原样返回
+                if payload in response_text:
+                    result = f"发现XSS漏洞:{test_url}"
+                    return result
+                else:
+                    return None
+        except asyncio.TimeoutError:
+            print(f"超时:{test_url}")
+            return None
+        except Exception as e:
+            print(f"请求错误{test_url}:{str(e)[:50]}") #简化错误信息
+            return None
+
+#4.主流程:串联所有步骤
+async def main():
+    #配置参数
+    TARGET_FILE = "C:\\Users\\xiao\\Desktop\\targets.txt"
+    MAX_CONCCURRENT = 5
+
+    #步骤1：假造目标
+    targets = load_targets(TARGET_FILE)
+    if not targets:
+        print("无目标可扫描，程序退出")
+        return
+
+    #步骤2:创建并发控制信号量和HTTP会话
+    semaphore = Semaphore(MAX_CONCCURRENT)
+    async with aiohttp.ClientSession() as session:
+        #创建所有扫描任务
+        tasks = [check_xss(session,target,semaphore) for target in targets]
+        #异步执行所有任务并收集结果
+        scan_results = await asyncio.gather(*tasks)
+
+    #步骤3:处理并保存结果
+    print("\n==== 扫描完成 ====")
+    for result in scan_results:
+        if result:
+            save_vuln_result(result)#保存漏洞结果
+        else:
+            print("未发现漏洞")
+
+#启动程序
+if __name__ == "__main__":
+    #解决winodws下asyncio的事件循环问题
+    try:
+        asyncio.run(main())
+    except RuntimeError as e:
+        if "Event loop is closed" in str(e):
+            print("程序正常结束")
+        else:
+            print(f"运行错误:{e}")
